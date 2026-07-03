@@ -1,0 +1,61 @@
+# 一键部署系统 · 生产编排
+# 用法：在仓库根创建 .env（见 docs/03-生产环境部署.md 第 4 节）后执行：
+#   docker compose up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-deploy}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-deploy_pwd}
+      POSTGRES_DB: ${DB_NAME:-deploy_center}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-deploy}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  server:
+    build: ./server
+    environment:
+      PORT: 3000
+      GITLAB_URL: ${GITLAB_URL}
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET}
+      OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      FRONTEND_URL: ${FRONTEND_URL}
+      ADMIN_USERNAMES: ${ADMIN_USERNAMES}
+      DEPLOY_MIN_ACCESS_TEST: ${DEPLOY_MIN_ACCESS_TEST:-30}
+      DEPLOY_MIN_ACCESS_PROD: ${DEPLOY_MIN_ACCESS_PROD:-40}
+      # AI 提示词管理：内网 MaaS 网关（Anthropic 协议），Key 由用户在页面配置、AES-256-GCM 加密落盘
+      AI_GATEWAY_URL: ${AI_GATEWAY_URL:-https://10.0.147.128:8080}
+      AI_MODEL: ${AI_MODEL:-deepseek-v4-pro}
+      # Key 加密密钥（未配置时回退 JWT_SECRET）；AI_CA_FILE 可选，指向网关根 CA 证书，不配则跳过自签名校验
+      AI_KEY_SECRET: ${AI_KEY_SECRET:-}
+      AI_CA_FILE: ${AI_CA_FILE:-}
+      # JSON 文件落盘路径（持久化到 serverdata 卷，重建容器不丢数据）
+      DATA_FILE: /app/data/store.json
+      # 接入 Prisma 后启用：
+      DATABASE_URL: postgresql://${DB_USER:-deploy}:${DB_PASSWORD:-deploy_pwd}@db:5432/${DB_NAME:-deploy_center}
+    volumes:
+      - serverdata:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: .
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  serverdata:

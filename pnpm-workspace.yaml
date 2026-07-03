@@ -1,0 +1,4 @@
+# 允许 esbuild 运行 postinstall 脚本（消除 ERR_PNPM_IGNORED_BUILDS）。
+# pnpm 11.2.2 使用 allowBuilds 映射格式（package: true/false），而非 onlyBuiltDependencies 列表。
+allowBuilds:
+  esbuild: true

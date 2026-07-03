@@ -1,0 +1,45 @@
+{
+  "name": "gitlab-deploy-center",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "公司内部一键部署系统（GitLab Deploy Center）前端",
+  "scripts": {
+    "dev": "vite",
+    "dev:all": "concurrently -k -n web,server -c cyan,green \"pnpm dev\" \"pnpm -C server start:dev\"",
+    "server": "pnpm -C server start:dev",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit",
+    "deploy": "powershell -ExecutionPolicy Bypass -File ./deploy.ps1"
+  },
+  "dependencies": {
+    "@ant-design/cssinjs": "^1.24.0",
+    "@ant-design/icons": "^5.5.2",
+    "@tanstack/react-query": "^5.62.0",
+    "antd": "^5.22.0",
+    "axios": "^1.7.9",
+    "dayjs": "^1.11.13",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@unocss/reset": "^66.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.2",
+    "unocss": "^66.0.0",
+    "vite": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=11"
+  },
+  "packageManager": "pnpm@11.2.2"
+}

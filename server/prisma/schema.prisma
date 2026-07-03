@@ -1,0 +1,117 @@
+// 一键部署系统数据模型（对应需求文档 §9）
+// 用于将内存 StoreService 替换为 PostgreSQL 持久化。
+// 迁移步骤见 docs/生产部署清单.md「五、内存存储 → Prisma/PostgreSQL」。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 用户（缓存自 GitLab + 平台扩展）
+model User {
+  id           Int          @id // 直接用 GitLab user id
+  gitlabUserId Int          @unique
+  username     String
+  name         String
+  avatarUrl    String?
+  isAdmin      Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  token        OAuthToken?
+  favorites    Favorite[]
+  deployments  Deployment[]
+  auditLogs    AuditLog[]
+}
+
+/// GitLab OAuth token（生产需加密存储，见部署清单安全章节）
+model OAuthToken {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessTokenEnc  String
+  refreshTokenEnc String?
+  expiresAt       DateTime?
+  updatedAt       DateTime @updatedAt
+}
+
+/// 环境字典
+model Environment {
+  id       Int     @id @default(autoincrement())
+  code     String  @unique // test / staging / prod ...
+  name     String
+  sort     Int     @default(0)
+  color    String?
+}
+
+/// 项目-环境-分支-触发映射（分支区分环境，见 §6.5）
+model ProjectEnvConfig {
+  id               Int     @id @default(autoincrement())
+  gitlabProjectId  Int
+  envCode          String
+  ref              String  // 该环境绑定分支，如 测试→develop
+  strategy         String  @default("manual_job") // manual_job | create_pipeline
+  jobNamePattern   String?
+  extraVariables   Json?
+  minAccessLevel   Int     @default(30)
+
+  @@unique([gitlabProjectId, envCode])
+  @@index([gitlabProjectId])
+}
+
+/// 部署记录
+model Deployment {
+  id                Int       @id @default(autoincrement())
+  gitlabProjectId   Int
+  projectName       String
+  ref               String
+  envCode           String
+  strategy          String    @default("manual_job")
+  status            String    @default("pending") // pending|running|success|failed|canceled
+  gitlabPipelineId  Int?
+  gitlabJobId       Int?
+  triggeredByUserId Int
+  triggeredBy       User      @relation(fields: [triggeredByUserId], references: [id])
+  triggeredByName   String
+  variables         Json?
+  note              String?
+  startedAt         DateTime  @default(now())
+  finishedAt        DateTime?
+  durationSec       Int?
+  failReason        String?
+
+  @@index([gitlabProjectId])
+  @@index([envCode])
+  @@index([status])
+  @@index([startedAt])
+}
+
+/// 收藏
+model Favorite {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gitlabProjectId Int
+  createdAt       DateTime @default(now())
+
+  @@unique([userId, gitlabProjectId])
+}
+
+/// 审计日志
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id])
+  action     String   // deploy | cancel | config_change ...
+  targetType String?
+  targetId   String?
+  detail     Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}

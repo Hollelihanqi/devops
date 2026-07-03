@@ -1,0 +1,5 @@
+# 让 server 成为独立工作区根（与仓库根的 pnpm-workspace.yaml 隔离），
+# 这样在 server/ 直接 `pnpm install` 即可，无需 --ignore-workspace。
+# 允许 @nestjs/core 运行 postinstall 脚本（消除 ERR_PNPM_IGNORED_BUILDS）。
+allowBuilds:
+  '@nestjs/core': true

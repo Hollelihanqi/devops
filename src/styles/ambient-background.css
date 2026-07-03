@@ -1,0 +1,642 @@
+/* 高度链：固定 100% + 外层禁滚，保证「整页 100vh、不在 html 层出现滚动」。
+   页面内容区各自管理滚动（见 .app-page-content / PageContainer）。 */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: #fff;
+}
+
+#root {
+  height: 100%;
+  position: relative;
+  isolation: isolate;
+}
+
+.ant-app {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+}
+
+.ant-app > :not(.ambient-cloud-background) {
+  position: relative;
+  z-index: 1;
+}
+
+.ambient-cloud-background {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: #fff;
+}
+
+.ambient-cloud-background__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0.98;
+  filter: blur(18px) saturate(1.24);
+  transform: scale(1.03);
+  transform-origin: center;
+}
+
+.ambient-cloud-background::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background:
+    radial-gradient(circle at 50% 12%, rgba(255, 255, 255, 0.08), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.36) 82%);
+}
+
+.app-shell,
+.app-shell .ant-layout,
+.login-screen {
+  background: transparent !important;
+}
+
+.app-shell .ant-layout-sider {
+  background: rgba(255, 255, 255, 0.78) !important;
+  border-right-color: rgba(22, 119, 255, 0.1) !important;
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.app-shell .ant-layout-header {
+  background: rgba(255, 255, 255, 0.72) !important;
+  border-bottom-color: rgba(22, 119, 255, 0.1) !important;
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.app-shell .ant-layout-sider .ant-menu {
+  background: transparent;
+  border-inline-end: 0;
+}
+
+.app-shell .ant-layout-sider .ant-menu-item {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: transparent !important;
+  transition:
+    color 180ms ease,
+    box-shadow 220ms ease,
+    transform 220ms ease;
+}
+
+.app-shell .ant-layout-sider .ant-menu-item::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  opacity: 0;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(120, 232, 190, 0.48), transparent 34%),
+    radial-gradient(circle at 78% 24%, rgba(131, 199, 255, 0.46), transparent 36%),
+    radial-gradient(circle at 44% 92%, rgba(255, 222, 68, 0.28), transparent 40%),
+    rgba(255, 255, 255, 0.42);
+  background-size: 180% 180%, 170% 170%, 160% 160%, 100% 100%;
+  filter: saturate(1.18);
+  transition: opacity 220ms ease;
+}
+
+.app-shell .ant-layout-sider .ant-menu-item:hover,
+.app-shell .ant-layout-sider .ant-menu-item-selected {
+  color: #1677ff;
+  box-shadow: 0 10px 24px rgba(65, 165, 205, 0.12);
+}
+
+.app-shell .ant-layout-sider .ant-menu-item:hover::before,
+.app-shell .ant-layout-sider .ant-menu-item-selected::before {
+  opacity: 1;
+  animation: menu-cloud-float 7s ease-in-out infinite alternate;
+}
+
+.app-shell .ant-layout-sider .ant-menu-item .ant-menu-title-content,
+.app-shell .ant-layout-sider .ant-menu-item .ant-menu-item-icon {
+  position: relative;
+  z-index: 1;
+}
+
+.app-shell .ant-layout-sider .ant-menu-item::after {
+  display: none;
+}
+
+.app-shell .ant-layout-sider .ant-menu-item-active,
+.app-shell .ant-layout-sider .ant-menu-submenu-title:hover {
+  background: transparent !important;
+}
+
+/* 内容区：占满 Header 以下剩余高度，自身不滚——滚动交给页面内部（PageContainer/表格表体）。 */
+.app-page-content {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+/* ---- 表头固定 / 表体滚动：让 antd Card 撑满父级、Table 用 flex 填充 ---- */
+
+/* Card 变成「填满高度、body 可 flex」结构，配合 .fill-table 实现表头固定滚动 */
+.fill-card.ant-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.fill-card.ant-card > .ant-card-head {
+  flex-shrink: 0;
+}
+
+.fill-card.ant-card > .ant-card-body {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+/* Table：表头固定、表体填充并纵向滚动。
+   antd 设了 scroll.y 即会渲染独立 .ant-table-header + .ant-table-body（同步横向滚动）。
+   关键：从 .ant-table-wrapper → .ant-table → .ant-table-container 每一层都必须是
+   「填满父级的纵向 flex + min-height:0」，否则 .ant-table-body 的 flex:1 不生效、
+   会按内容撑高并被上层 overflow:hidden 裁掉（表现为数据被隐藏且无滚动条）。 */
+.fill-table {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.fill-table > .ant-table-wrapper {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Table 设了 loading 时，antd 会多套 .ant-spin-nested-loading > .ant-spin-container 两层，
+   必须把它们也纳入「纵向 flex 填充」链，否则高度链在此处断开。 */
+.fill-table .ant-spin-nested-loading,
+.fill-table .ant-spin-container {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fill-table .ant-table {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fill-table .ant-table-container {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fill-table .ant-table-header {
+  flex-shrink: 0;
+}
+
+.fill-table .ant-table-body {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none !important;
+  overflow-y: auto !important;
+}
+
+.fill-table .ant-table-pagination {
+  flex-shrink: 0;
+}
+
+.app-shell .ant-card,
+.login-screen .ant-card {
+  background: rgba(255, 255, 255, 0.84);
+  border-color: rgba(22, 119, 255, 0.08);
+  box-shadow: 0 18px 48px rgba(80, 126, 164, 0.12);
+  backdrop-filter: blur(14px) saturate(1.05);
+}
+
+.login-screen .ant-card {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.login-screen .ant-card-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-shell .ant-table-wrapper .ant-table,
+.app-shell .ant-table-wrapper .ant-table-container,
+.app-shell .ant-table-wrapper .ant-table-cell {
+  background: transparent;
+}
+
+.projects-workspace {
+  position: relative;
+  isolation: isolate;
+}
+
+.projects-workspace::before {
+  position: absolute;
+  inset: -8px -10px -8px -10px;
+  z-index: 0;
+  content: "";
+  display: block;
+  border-radius: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(160, 238, 142, 0.18), transparent 34%),
+    radial-gradient(circle at 68% 10%, rgba(82, 213, 235, 0.14), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06));
+  background-size: 160% 150%, 145% 150%, 100% 100%;
+  animation: workspace-cloud-float 14s ease-in-out infinite alternate;
+}
+
+.projects-workspace > .ant-col {
+  position: relative;
+  z-index: 1;
+}
+
+.app-shell .project-group-card.ant-card {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.app-shell .project-group-card .ant-card-head {
+  background: transparent;
+  border-bottom-color: transparent;
+  padding-inline: 12px;
+}
+
+.app-shell .project-group-card .ant-card-body {
+  background: transparent;
+}
+
+.app-shell .project-group-card .ant-tree {
+  background: transparent;
+}
+
+.app-shell .project-group-card .ant-tree-list-holder-inner {
+  background: transparent;
+}
+
+.app-shell .project-group-card .ant-tree-node-content-wrapper {
+  border-radius: 8px;
+  background: transparent;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.app-shell .project-group-card .ant-tree-node-content-wrapper:hover,
+.app-shell .project-group-card .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(120, 232, 190, 0.32), transparent 42%),
+    radial-gradient(circle at 86% 28%, rgba(131, 199, 255, 0.26), transparent 46%),
+    rgba(255, 255, 255, 0.18);
+  color: #1677ff;
+  box-shadow: 0 8px 18px rgba(65, 165, 205, 0.08);
+}
+
+.app-shell .project-list-panel .ant-card {
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 12px 28px rgba(80, 126, 164, 0.08);
+}
+
+.app-shell .project-list-panel .ant-card-actions {
+  background: rgba(255, 255, 255, 0.58);
+}
+
+/* ---- 提示词卡片：响应式网格、贴合流光背景、无阴影、悬浮时背景云团动起来 ---- */
+.prompt-grid {
+  display: grid;
+  grid-template-columns: repeat(1, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  padding-bottom: 8px;
+}
+
+/* 卡片宽度自适应：不同屏幕一行显示的个数不同 */
+@media (min-width: 640px) {
+  .prompt-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (min-width: 1280px) {
+  .prompt-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (min-width: 1800px) {
+  .prompt-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.prompt-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow: none;
+  backdrop-filter: blur(10px) saturate(1.12);
+  transition:
+    border-color 280ms ease,
+    background 280ms ease,
+    transform 280ms ease;
+}
+
+/* 展开全文的卡片跨满整行，避免把同行其它卡片撑高 */
+.prompt-card--expanded {
+  grid-column: 1 / -1;
+}
+
+/* 悬浮时浮现的彩色云团层，配色与流光背景一致，并缓慢漂移 */
+.prompt-card::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  content: "";
+  opacity: 0;
+  background:
+    radial-gradient(circle at 16% 22%, rgba(120, 232, 190, 0.5), transparent 40%),
+    radial-gradient(circle at 82% 18%, rgba(131, 199, 255, 0.46), transparent 44%),
+    radial-gradient(circle at 64% 96%, rgba(255, 222, 68, 0.32), transparent 46%),
+    radial-gradient(circle at 30% 88%, rgba(255, 190, 222, 0.3), transparent 48%),
+    rgba(255, 255, 255, 0.32);
+  background-size: 180% 180%, 175% 175%, 165% 165%, 170% 170%, 100% 100%;
+  filter: saturate(1.2);
+  transition: opacity 320ms ease;
+}
+
+.prompt-card:hover {
+  border-color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.prompt-card:hover::before {
+  opacity: 1;
+  animation: prompt-cloud-float 9s ease-in-out infinite alternate;
+}
+
+.prompt-card__inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 232px;
+  padding: 16px 18px;
+}
+
+.prompt-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.prompt-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.prompt-card__star {
+  flex-shrink: 0;
+  color: #fbbf24;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.prompt-card__title {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: rgba(0, 0, 0, 0.85);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.prompt-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 48px;
+  overflow: hidden;
+}
+
+.prompt-card__note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.prompt-card__content {
+  flex: 1;
+  min-height: 0;
+  margin: 0 !important;
+  font-family:
+    "JetBrains Mono", "Cascadia Code", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: rgba(0, 0, 0, 0.66);
+}
+
+.prompt-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid rgba(120, 160, 200, 0.16);
+}
+
+.prompt-card__stats {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.prompt-card__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 手动刷新遮罩：居中 Spin，盖在列表区上方 */
+.prompt-refresh-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+@keyframes prompt-cloud-float {
+  0% {
+    background-position:
+      0% 28%,
+      100% 18%,
+      48% 100%,
+      24% 96%,
+      0 0;
+  }
+  50% {
+    background-position:
+      32% 8%,
+      72% 46%,
+      60% 70%,
+      54% 60%,
+      0 0;
+  }
+  100% {
+    background-position:
+      16% 70%,
+      92% 62%,
+      24% 36%,
+      12% 30%,
+      0 0;
+  }
+}
+
+@keyframes menu-cloud-float {
+  0% {
+    background-position:
+      0% 30%,
+      100% 20%,
+      40% 100%,
+      0 0;
+  }
+  50% {
+    background-position:
+      35% 10%,
+      70% 48%,
+      58% 70%,
+      0 0;
+  }
+  100% {
+    background-position:
+      18% 72%,
+      92% 64%,
+      20% 38%,
+      0 0;
+  }
+}
+
+@keyframes workspace-cloud-float {
+  0% {
+    background-position:
+      0% 20%,
+      100% 12%,
+      0 0;
+  }
+  100% {
+    background-position:
+      26% 48%,
+      72% 30%,
+      0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-cloud-background__canvas {
+    filter: blur(20px) saturate(1.08);
+  }
+
+  .app-shell .ant-layout-sider .ant-menu-item:hover::before,
+  .app-shell .ant-layout-sider .ant-menu-item-selected::before {
+    animation: none;
+  }
+
+  .projects-workspace::before {
+    animation: none;
+  }
+
+  .prompt-card:hover::before {
+    animation: none;
+  }
+}
+
+.app-shell .project-list-panel .project-card-grid > .ant-col {
+  display: flex;
+}
+
+.app-shell .project-list-panel .project-card.ant-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 122px;
+  min-width: 0;
+}
+
+.app-shell .project-list-panel .project-card .ant-card-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.app-shell .project-list-panel .project-card .ant-card-actions {
+  flex-shrink: 0;
+}
+
+.app-shell .project-list-panel .project-card .ant-card-actions > li {
+  min-width: 0;
+}
+
+.app-shell .project-list-panel .project-card .ant-card-actions > li > span,
+.app-shell .project-list-panel .project-card .ant-card-actions .ant-tooltip-open {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .project-list-panel .project-card-tags {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.app-shell .project-list-panel .project-card-tags .ant-tag {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
