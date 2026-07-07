@@ -38,6 +38,8 @@ export interface Deployment {
   diagnosis?: DeployDiagnosis
   /** 实时进度 0-100，由 pipeline job 状态推导；仅响应时附加，不落盘 */
   progress?: number
+  /** 是否已发过飞书终态通知（首次进入终态置位并落盘，避免并发/重启后重复发送） */
+  notified?: boolean
 }
 
 /** AI 部署失败诊断结果（落盘缓存到 Deployment.diagnosis），见开发文档 §3.4 */

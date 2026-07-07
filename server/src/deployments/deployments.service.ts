@@ -3,9 +3,13 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
 import { GitlabService } from '../core/gitlab.service'
 import { StoreService } from '../core/store.service'
 import { FeishuService } from '../core/feishu.service'
@@ -45,15 +49,25 @@ const DIAGNOSE_SYSTEM = [
 ].join('\n')
 
 @Injectable()
-export class DeploymentsService {
+export class DeploymentsService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(DeploymentsService.name)
+  /** 后台巡检间隔，默认 5s；env DEPLOY_POLL_INTERVAL_MS 可覆盖 */
+  private readonly pollIntervalMs: number
+  private pollTimer: NodeJS.Timeout | null = null
+  /** 上一轮巡检未完成则跳过本轮，避免堆积（部署数少，间隔充足） */
+  private polling = false
+
   constructor(
     private readonly gitlab: GitlabService,
     private readonly store: StoreService,
     private readonly projects: ProjectsService,
     private readonly ai: AiService,
     private readonly feishu: FeishuService,
+    private readonly config: ConfigService,
     @Inject(CI_PROVIDER) private readonly ci: CiProvider,
-  ) {}
+  ) {
+    this.pollIntervalMs = Number(this.config.get<string>('DEPLOY_POLL_INTERVAL_MS')) || 5_000
+  }
 
   private token(user: SessionUser): string {
     const t = this.store.getToken(user.id)
@@ -110,9 +124,14 @@ export class DeploymentsService {
       if (status === 'failed') patch.failReason = `流水线 #${pipeline.id} 执行失败`
     }
     this.store.updateDeployment(dep.id, patch)
-    // 部署刚进入终态（成功/失败/取消）时发一次飞书通知；refresh 入口已保证旧状态非终态，故这里即首次进入终态
+    // 部署刚进入终态（成功/失败/取消）时发一次飞书通知。靠 notified 标记在同步段内「读+置位」
+    // 原子判断：前端 list/detail 与后台巡检可能并发对本条调 refresh，避免重复发送（落盘后重启亦不重发）。
     if (this.isTerminal(status)) {
-      this.feishu.notifyDeployment(this.store.getDeployment(dep.id)!).catch(() => {})
+      const latest = this.store.getDeployment(dep.id)!
+      if (!latest.notified) {
+        this.store.updateDeployment(dep.id, { notified: true })
+        this.feishu.notifyDeployment(latest).catch(() => {})
+      }
     }
     return { ...this.store.getDeployment(dep.id)!, progress: this.jobProgress(jobs, pipeline.status) }
   }
@@ -353,6 +372,48 @@ export class DeploymentsService {
       files: [],
       model,
       createdAt: now,
+    }
+  }
+
+  // ---- 后台巡检：不依赖前端请求，主动检测进行中部署是否进入终态并通知 ----
+  onModuleInit() {
+    this.pollTimer = setInterval(() => this.pollRunning(), this.pollIntervalMs)
+  }
+
+  onModuleDestroy() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer)
+      this.pollTimer = null
+    }
+  }
+
+  /**
+   * 巡检所有进行中的部署：用发起人 token 查 GitLab，复用 refresh 回写状态、
+   * 进入终态即发飞书通知。前端标签页在后台、轮询被暂停时仍能及时通知。
+   * 上一轮未完成则跳过本轮；单条失败仅告警，不影响其他条与定时器。
+   */
+  private async pollRunning() {
+    if (this.polling) return
+    this.polling = true
+    try {
+      const active = this.store
+        .listDeployments({})
+        .filter((d) => d.gitlabPipelineId && !this.isTerminal(d.status))
+      await Promise.allSettled(
+        active.map(async (dep) => {
+          const token = this.store.getToken(dep.triggeredByUserId)
+          if (!token) return // 发起人 token 失效：跳过，等下一轮或前端请求
+          try {
+            await this.refresh(token, dep)
+          } catch (e) {
+            this.logger.warn(`巡检部署 #${dep.id} 失败：${(e as Error).message}`)
+          }
+        }),
+      )
+    } catch (e) {
+      this.logger.warn(`部署巡检异常：${(e as Error).message}`)
+    } finally {
+      this.polling = false
     }
   }
 }
