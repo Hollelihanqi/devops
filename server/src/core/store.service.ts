@@ -16,6 +16,8 @@ import type {
 /**
  * 存储层：内存 Map + JSON 文件落盘。
  * 启动时从 DATA_FILE 恢复，写操作后防抖落盘，进程退出前兜底 flush。
+ * 崩溃防护：落盘走「fsync 临时文件 → rename」，每日轮转快照到 backups/；
+ * 主文件损坏时留档 .corrupt-* 并尝试从备份恢复，均失败则拒绝启动（绝不带空存储覆写仅存的恢复机会）。
  * 数据量小、单实例内部工具适用；高并发/多实例请切换 Prisma + PostgreSQL（见需求文档 §9）。
  */
 @Injectable()
@@ -40,12 +42,15 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
   // ---- 持久化 ----
   private dataFile = ''
   private tmpFile = ''
+  private backupsDir = '' // 每日快照目录，主文件损坏时的恢复来源
+  private lastBackupDay = ''
   private saveTimer: NodeJS.Timeout | null = null
 
   onModuleInit() {
     this.dataFile =
       this.config.get<string>('DATA_FILE') || path.join(process.cwd(), 'data', 'store.json')
     this.tmpFile = `${this.dataFile}.tmp`
+    this.backupsDir = path.join(path.dirname(this.dataFile), 'backups')
     this.load()
   }
 
@@ -59,31 +64,68 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
   }
 
   private load() {
-    try {
-      if (!fs.existsSync(this.dataFile)) {
-        this.logger.log(`无历史数据文件，使用空存储（将写入 ${this.dataFile}）`)
-        return
-      }
-      const raw = JSON.parse(fs.readFileSync(this.dataFile, 'utf-8'))
-      this.seq = raw.seq ?? 1
-      this.users = new Map(raw.users ?? [])
-      this.tokens = new Map(raw.tokens ?? [])
-      this.deployments = new Map(raw.deployments ?? [])
-      this.favorites = new Map(
-        (raw.favorites ?? []).map(([uid, arr]: [number, number[]]) => [uid, new Set(arr)]),
-      )
-      this.envConfigs = new Map(raw.envConfigs ?? [])
-      this.userOverrides = new Map(raw.userOverrides ?? [])
-      this.prompts = new Map(raw.prompts ?? [])
-      this.aiKeys = new Map(raw.aiKeys ?? [])
-      this.conversations = new Map(raw.conversations ?? [])
-      this.projectMemory = new Map(raw.projectMemory ?? [])
-      this.logger.log(
-        `已恢复数据：用户 ${this.users.size}、部署 ${this.deployments.size}、收藏用户 ${this.favorites.size}、提示词 ${this.prompts.size}`,
-      )
-    } catch (e) {
-      this.logger.error(`加载持久化数据失败，回退空存储：${(e as Error).message}`)
+    if (!fs.existsSync(this.dataFile)) {
+      this.logger.log(`无历史数据文件，使用空存储（将写入 ${this.dataFile}）`)
+      return
     }
+    try {
+      this.loadFrom(this.dataFile)
+    } catch (e) {
+      // 主文件损坏：先移出留档（.corrupt-<ts>），再试最新备份；
+      // 都失败则抛错拒绝启动——绝不能带空存储继续跑，否则首次落盘会把仅存的恢复机会也覆盖掉
+      const corrupt = `${this.dataFile}.corrupt-${Date.now()}`
+      try {
+        fs.renameSync(this.dataFile, corrupt)
+        this.logger.error(`数据文件损坏，已移至 ${corrupt}：${(e as Error).message}`)
+      } catch (renameErr) {
+        this.logger.error(
+          `数据文件损坏且无法移出（${(renameErr as Error).message}）：${(e as Error).message}`,
+        )
+      }
+      const backup = this.latestBackup()
+      if (backup) {
+        try {
+          this.loadFrom(backup)
+          this.logger.warn(`已从备份 ${backup} 恢复（数据回退到备份时点，请人工核对）`)
+          return
+        } catch (be) {
+          this.logger.error(`备份 ${backup} 亦损坏：${(be as Error).message}`)
+        }
+      }
+      throw new Error(
+        `持久化数据无法恢复（主文件与备份均不可用），已拒绝启动以防覆盖，请人工检查 ${path.dirname(this.dataFile)}`,
+      )
+    }
+  }
+
+  private loadFrom(file: string) {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf-8'))
+    this.seq = raw.seq ?? 1
+    this.users = new Map(raw.users ?? [])
+    this.tokens = new Map(raw.tokens ?? [])
+    this.deployments = new Map(raw.deployments ?? [])
+    this.favorites = new Map(
+      (raw.favorites ?? []).map(([uid, arr]: [number, number[]]) => [uid, new Set(arr)]),
+    )
+    this.envConfigs = new Map(raw.envConfigs ?? [])
+    this.userOverrides = new Map(raw.userOverrides ?? [])
+    this.prompts = new Map(raw.prompts ?? [])
+    this.aiKeys = new Map(raw.aiKeys ?? [])
+    this.conversations = new Map(raw.conversations ?? [])
+    this.projectMemory = new Map(raw.projectMemory ?? [])
+    this.logger.log(
+      `已从 ${file} 恢复数据：用户 ${this.users.size}、部署 ${this.deployments.size}、收藏用户 ${this.favorites.size}、提示词 ${this.prompts.size}`,
+    )
+  }
+
+  /** backups/ 里最新的每日快照（文件名含日期，字典序即时间序） */
+  private latestBackup(): string | undefined {
+    if (!fs.existsSync(this.backupsDir)) return undefined
+    const files = fs
+      .readdirSync(this.backupsDir)
+      .filter((f) => /^store-\d{4}-\d{2}-\d{2}\.json$/.test(f))
+      .sort()
+    return files.length ? path.join(this.backupsDir, files[files.length - 1]) : undefined
   }
 
   /** 写操作后调用：300ms 防抖，合并高频写入 */
@@ -95,10 +137,18 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     }, 300)
   }
 
-  /** 原子写入：先写临时文件再 rename，避免半截文件 */
+  /**
+   * 原子写入：临时文件写完先 fsync 再 rename，最后刷目录项——
+   * 断电时要么旧文件完好、要么新文件完整，不会出现空文件/半截文件。
+   */
   private persist() {
     if (!this.dataFile) return
     try {
+      try {
+        this.rotateBackup()
+      } catch (e) {
+        this.logger.warn(`每日快照失败（不影响本次落盘）：${(e as Error).message}`)
+      }
       const snapshot = {
         seq: this.seq,
         users: [...this.users],
@@ -113,10 +163,47 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         projectMemory: [...this.projectMemory],
       }
       fs.mkdirSync(path.dirname(this.dataFile), { recursive: true })
-      fs.writeFileSync(this.tmpFile, JSON.stringify(snapshot))
+      const fd = fs.openSync(this.tmpFile, 'w')
+      try {
+        fs.writeFileSync(fd, JSON.stringify(snapshot))
+        fs.fsyncSync(fd)
+      } finally {
+        fs.closeSync(fd)
+      }
       fs.renameSync(this.tmpFile, this.dataFile)
+      this.fsyncDir(path.dirname(this.dataFile))
     } catch (e) {
       this.logger.error(`持久化失败：${(e as Error).message}`)
+    }
+  }
+
+  /** 每天首次落盘前，把现有主文件快照进 backups/（保留最近 14 份），主文件损坏时由此恢复 */
+  private rotateBackup() {
+    const today = new Date().toISOString().slice(0, 10)
+    if (this.lastBackupDay === today || !fs.existsSync(this.dataFile)) return
+    fs.mkdirSync(this.backupsDir, { recursive: true })
+    fs.copyFileSync(this.dataFile, path.join(this.backupsDir, `store-${today}.json`))
+    this.lastBackupDay = today
+    const files = fs
+      .readdirSync(this.backupsDir)
+      .filter((f) => /^store-\d{4}-\d{2}-\d{2}\.json$/.test(f))
+      .sort()
+    for (const f of files.slice(0, Math.max(0, files.length - 14))) {
+      fs.rmSync(path.join(this.backupsDir, f), { force: true })
+    }
+  }
+
+  /** 刷目录项让 rename 本身也落盘；Windows 等不支持打开目录的平台忽略 */
+  private fsyncDir(dir: string) {
+    try {
+      const fd = fs.openSync(dir, 'r')
+      try {
+        fs.fsyncSync(fd)
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
+      // 目录不可打开/fsync 时放弃，rename 的持久性由文件 fsync 兜底
     }
   }
 
